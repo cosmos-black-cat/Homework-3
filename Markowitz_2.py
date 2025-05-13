@@ -50,12 +50,12 @@ class MyPortfolio:
     NOTE: You can modify the initialization function
     """
 
-    def __init__(self, price, exclude, lookback=50, gamma=0):
+    def __init__(self, price, exclude, lookback=60, vol_window=20):
         self.price = price
         self.returns = price.pct_change().fillna(0)
         self.exclude = exclude
         self.lookback = lookback
-        self.gamma = gamma
+        self.vol_window = vol_window
 
     def calculate_weights(self):
         # Get the assets by excluding the specified column
@@ -65,17 +65,66 @@ class MyPortfolio:
         self.portfolio_weights = pd.DataFrame(
             index=self.price.index, columns=self.price.columns
         )
-
-        """
-        TODO: Complete Task 4 Below
-        """
-
-        """
-        TODO: Complete Task 4 Above
-        """
-
-        self.portfolio_weights.ffill(inplace=True)
-        self.portfolio_weights.fillna(0, inplace=True)
+        
+        # Initialize all weights to 0
+        for asset in self.price.columns:
+            self.portfolio_weights[asset] = 0
+            
+        # Skip initial lookback period
+        for i in range(min(self.lookback, len(self.price))):
+            # Equal weight for initial period to fill values
+            weight = 1.0 / len(assets)
+            for asset in assets:
+                self.portfolio_weights.loc[self.price.index[i], asset] = weight
+        
+        # Calculate weights for each date after the lookback period
+        for i in range(self.lookback, len(self.price)):
+            # Get historical returns for lookback period
+            hist_returns = self.returns[assets].iloc[i-self.lookback:i]
+            
+            # Calculate volatility using shorter window for more responsiveness
+            vol_window = min(self.vol_window, i)
+            vols = self.returns[assets].iloc[i-vol_window:i].std() * np.sqrt(252)  # Annualized
+            
+            # Calculate momentum signal (3-month)
+            if i >= 60:  # 3 months (assuming ~20 trading days per month)
+                momentum = self.price[assets].iloc[i] / self.price[assets].iloc[i-60] - 1
+            else:
+                momentum = hist_returns.mean() * len(hist_returns)
+            
+            # Create combined score: momentum adjusted by volatility
+            # Higher momentum and lower volatility get higher scores
+            score = momentum / (vols + 1e-10)  # Add small constant to avoid division by zero
+            
+            # Filter for positive momentum assets only
+            score[momentum <= 0] = 0
+            
+            # If we have at least one positive momentum asset
+            if score.sum() > 0:
+                # Normalize scores to get weights
+                weights = score / score.sum()
+            else:
+                # Fall back to minimum volatility if no positive momentum
+                inv_vol = 1 / (vols + 1e-10)
+                weights = inv_vol / inv_vol.sum()
+            
+            # Ensure weights sum to 1
+            if abs(weights.sum() - 1.0) > 1e-10:
+                weights = weights / weights.sum()
+                
+            # Assign weights to each asset
+            for asset in assets:
+                self.portfolio_weights.loc[self.price.index[i], asset] = weights[asset]
+        
+        # Make sure weights are always between 0 and 1 and sum to 1
+        for i in range(len(self.portfolio_weights)):
+            row = self.portfolio_weights.iloc[i][assets]
+            row = np.maximum(0, row)  # Ensure non-negative
+            if row.sum() > 0:
+                self.portfolio_weights.iloc[i][assets] = row / row.sum()
+            else:
+                # Equal weight if all weights are 0 (fallback)
+                self.portfolio_weights.iloc[i][assets] = pd.Series(1.0/len(assets), index=assets)
 
     def calculate_portfolio_returns(self):
         # Ensure weights are calculated

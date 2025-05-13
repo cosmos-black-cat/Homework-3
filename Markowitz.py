@@ -57,14 +57,18 @@ class EqualWeightPortfolio:
         # Get the assets by excluding the specified column
         assets = df.columns[df.columns != self.exclude]
         self.portfolio_weights = pd.DataFrame(index=df.index, columns=df.columns)
-
-        """
-        TODO: Complete Task 1 Below
-        """
-
-        """
-        TODO: Complete Task 1 Above
-        """
+        
+        # Equal weight allocation: 1/n for each asset
+        n = len(assets)  # Number of assets after excluding SPY
+        equal_weight = 1 / n
+        
+        # Set equal weights for all assets except the excluded one
+        for asset in assets:
+            self.portfolio_weights[asset] = equal_weight
+        
+        # Set the weight of the excluded asset to 0
+        self.portfolio_weights[self.exclude] = 0
+        
         self.portfolio_weights.ffill(inplace=True)
         self.portfolio_weights.fillna(0, inplace=True)
 
@@ -96,7 +100,6 @@ Problem 2:
 Implement a risk parity strategy as dataframe "rp". Please do "not" include SPY.
 """
 
-
 class RiskParityPortfolio:
     def __init__(self, exclude, lookback=50):
         self.exclude = exclude
@@ -112,6 +115,11 @@ class RiskParityPortfolio:
         """
         TODO: Complete Task 2 Below
         """
+        for date in range(self.lookback+1, len(df)):
+            window = df_returns[assets].iloc[date - self.lookback: date]
+            inverse_volatility = 1 / window.std()
+            normalized_weights = inverse_volatility / inverse_volatility.sum()
+            self.portfolio_weights.loc[df.index[date], assets] = normalized_weights
 
         """
         TODO: Complete Task 2 Above
@@ -141,6 +149,72 @@ class RiskParityPortfolio:
 
         return self.portfolio_weights, self.portfolio_returns
 
+
+
+"""
+class RiskParityPortfolio:
+    def __init__(self, exclude, lookback=50):
+        self.exclude = exclude
+        self.lookback = lookback
+
+    def calculate_weights(self):
+        # Get the assets by excluding the specified column
+        assets = df.columns[df.columns != self.exclude]
+
+        # Calculate the portfolio weights
+        self.portfolio_weights = pd.DataFrame(index=df.index, columns=df.columns)
+
+        # Calculate weights for each date based on the lookback period
+        for i in range(self.lookback, len(df)):
+            # Get historical returns for the lookback period
+            historical_returns = df_returns.copy()[assets].iloc[i-self.lookback:i]
+            
+            # Calculate volatility (standard deviation) for each asset
+            volatilities = historical_returns.std()
+            
+            # Calculate inverse volatility weight based on the formula:
+            # wi = (1/σi) / Σ(1/σj)
+            
+            # Step 1: Calculate 1/σi for each asset
+            inverse_volatilities = 1 / volatilities
+            
+            # Step 2: Calculate the sum of all inverse volatilities Σ(1/σj)
+            sum_inverse_volatilities = inverse_volatilities.sum()
+            
+            # Step 3: Calculate the weights by dividing each inverse volatility by the sum
+            weights = inverse_volatilities / sum_inverse_volatilities
+            
+            # Assign weights to the portfolio for the current date
+            self.portfolio_weights.loc[df.index[i], assets] = weights
+        
+        # Set the weight of the excluded asset to 0
+        self.portfolio_weights[self.exclude] = 0
+
+        # Forward fill earlier dates and fill any remaining NaN values with 0
+        self.portfolio_weights.ffill(inplace=True)
+        self.portfolio_weights.fillna(0, inplace=True)
+
+    def calculate_portfolio_returns(self):
+        # Ensure weights are calculated
+        if not hasattr(self, "portfolio_weights"):
+            self.calculate_weights()
+
+        # Calculate the portfolio returns
+        self.portfolio_returns = df_returns.copy()
+        assets = df.columns[df.columns != self.exclude]
+        self.portfolio_returns["Portfolio"] = (
+            self.portfolio_returns[assets]
+            .mul(self.portfolio_weights[assets])
+            .sum(axis=1)
+        )
+
+    def get_results(self):
+        # Ensure portfolio returns are calculated
+        if not hasattr(self, "portfolio_returns"):
+            self.calculate_portfolio_returns()
+
+        return self.portfolio_weights, self.portfolio_returns
+"""   
 
 """
 Problem 3:
@@ -182,17 +256,29 @@ class MeanVariancePortfolio:
             env.start()
             with gp.Model(env=env, name="portfolio") as model:
                 """
-                TODO: Complete Task 3 Below
+                Mean-Variance optimization problem:
+                max w^T μ - (γ/2) w^T Σ w
+                subject to:
+                w_i ≥ 0 ∀i (long-only constraint),
+                Σ w_i = 1 (no leverage constraint)
                 """
-
-                # Sample Code: Initialize Decision w and the Objective
-                # NOTE: You can modify the following code
-                w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
-
-                """
-                TODO: Complete Task 3 Above
-                """
+                
+                # Initialize decision variables (portfolio weights)
+                # Long-only constraint is implemented using lb=0
+                w = model.addMVar(n, name="w", lb=0, ub=1)
+                
+                # Add constraint: sum of weights equals 1 (no leverage)
+                model.addConstr(w.sum() == 1, "budget")
+                
+                # Set objective: maximize w^T μ - (γ/2) w^T Σ w
+                # This is return minus risk penalty
+                risk = w @ Sigma @ w  # Quadratic term for portfolio variance
+                ret = mu @ w          # Linear term for expected return
+                
+                # Maximize return and minimize risk with risk aversion parameter gamma
+                model.setObjective(ret - gamma/2 * risk, gp.GRB.MAXIMIZE)
+                
+                # Optimize model
                 model.optimize()
 
                 # Check if the status is INF_OR_UNBD (code 4)
@@ -214,6 +300,9 @@ class MeanVariancePortfolio:
                         var = model.getVarByName(f"w[{i}]")
                         # print(f"w {i} = {var.X}")
                         solution.append(var.X)
+                else:
+                    # If optimization failed, return equal weights as a fallback
+                    solution = [1/n] * n
 
         return solution
 
