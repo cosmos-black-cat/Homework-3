@@ -50,12 +50,12 @@ class MyPortfolio:
     NOTE: You can modify the initialization function
     """
 
-    def __init__(self, price, exclude, lookback=60, vol_window=20):
+    def __init__(self, price, exclude, lookback=50, gamma=0):
         self.price = price
         self.returns = price.pct_change().fillna(0)
         self.exclude = exclude
         self.lookback = lookback
-        self.vol_window = vol_window
+        self.gamma = gamma
 
     def calculate_weights(self):
         # Get the assets by excluding the specified column
@@ -65,66 +65,53 @@ class MyPortfolio:
         self.portfolio_weights = pd.DataFrame(
             index=self.price.index, columns=self.price.columns
         )
-        
-        # Initialize all weights to 0
+
+        """
+        TODO: Complete Task 4 Below
+        """
+        # Parameters
+        target_variance_threshold = 0.05  # Example threshold, adjust based on desired risk level
+
+        # Calculate annualized expected returns and covariance matrix from the recent returns
+        annual_returns = self.returns.mean() * 252
+        cov_matrix = self.returns.cov() * 252
+
+        # Set the number of assets and create asset names list
+        asset_names = [asset for asset in assets if asset != self.exclude]
+
+        # Optimization model
+        m = gp.Model("portfolio_optimization")
+
+        # Decision variables - weights of assets in portfolio
+        weights = m.addVars(asset_names, name="w", lb=0.0)
+
+        # Portfolio return and variance
+        portfolio_return = gp.quicksum(weights[asset] * annual_returns[asset] for asset in asset_names)
+        portfolio_variance = gp.quicksum(weights[asset] * weights[other] * cov_matrix.loc[asset, other]
+                                         for asset in asset_names for other in asset_names)
+
+        m.setObjective(portfolio_return, gp.GRB.MAXIMIZE)  # Objective is to maximize return
+
+        # Constraints
+        m.addConstr(weights.sum() == 1, "budget")  # The sum of weights is 1
+        m.addConstr(portfolio_variance <= target_variance_threshold, "max_variance")  # Variance threshold constraint
+
+        # Optimize the model
+        m.optimize()
+
+        # Update portfolio weights based on optimization outcome
         for asset in self.price.columns:
-            self.portfolio_weights[asset] = 0
-            
-        # Skip initial lookback period
-        for i in range(min(self.lookback, len(self.price))):
-            # Equal weight for initial period to fill values
-            weight = 1.0 / len(assets)
-            for asset in assets:
-                self.portfolio_weights.loc[self.price.index[i], asset] = weight
-        
-        # Calculate weights for each date after the lookback period
-        for i in range(self.lookback, len(self.price)):
-            # Get historical returns for lookback period
-            hist_returns = self.returns[assets].iloc[i-self.lookback:i]
-            
-            # Calculate volatility using shorter window for more responsiveness
-            vol_window = min(self.vol_window, i)
-            vols = self.returns[assets].iloc[i-vol_window:i].std() * np.sqrt(252)  # Annualized
-            
-            # Calculate momentum signal (3-month)
-            if i >= 60:  # 3 months (assuming ~20 trading days per month)
-                momentum = self.price[assets].iloc[i] / self.price[assets].iloc[i-60] - 1
+            if asset in weights:
+                self.portfolio_weights.loc[:, asset] = weights[asset].X
             else:
-                momentum = hist_returns.mean() * len(hist_returns)
-            
-            # Create combined score: momentum adjusted by volatility
-            # Higher momentum and lower volatility get higher scores
-            score = momentum / (vols + 1e-10)  # Add small constant to avoid division by zero
-            
-            # Filter for positive momentum assets only
-            score[momentum <= 0] = 0
-            
-            # If we have at least one positive momentum asset
-            if score.sum() > 0:
-                # Normalize scores to get weights
-                weights = score / score.sum()
-            else:
-                # Fall back to minimum volatility if no positive momentum
-                inv_vol = 1 / (vols + 1e-10)
-                weights = inv_vol / inv_vol.sum()
-            
-            # Ensure weights sum to 1
-            if abs(weights.sum() - 1.0) > 1e-10:
-                weights = weights / weights.sum()
-                
-            # Assign weights to each asset
-            for asset in assets:
-                self.portfolio_weights.loc[self.price.index[i], asset] = weights[asset]
-        
-        # Make sure weights are always between 0 and 1 and sum to 1
-        for i in range(len(self.portfolio_weights)):
-            row = self.portfolio_weights.iloc[i][assets]
-            row = np.maximum(0, row)  # Ensure non-negative
-            if row.sum() > 0:
-                self.portfolio_weights.iloc[i][assets] = row / row.sum()
-            else:
-                # Equal weight if all weights are 0 (fallback)
-                self.portfolio_weights.iloc[i][assets] = pd.Series(1.0/len(assets), index=assets)
+                self.portfolio_weights.loc[:, asset] = 0
+
+        """
+        TODO: Complete Task 4 Above
+        """
+
+        self.portfolio_weights.ffill(inplace=True)
+        self.portfolio_weights.fillna(0, inplace=True)
 
     def calculate_portfolio_returns(self):
         # Ensure weights are calculated
@@ -146,6 +133,7 @@ class MyPortfolio:
             self.calculate_portfolio_returns()
 
         return self.portfolio_weights, self.portfolio_returns
+
 
 
 """
